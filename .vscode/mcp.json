@@ -1,0 +1,16 @@
+{
+    "mcpServers": {
+        "eslint": {
+            "command": "pnpx",
+            "args": [
+                "@eslint/mcp@latest"
+            ]
+        },
+        "zookeeper": {
+            "command": "pnpm",
+            "args": [
+                "mcp-server-zookeeper"
+            ]
+        }
+    }
+}
