@@ -19,7 +19,7 @@ export function registerResources(client: Client, server: McpServer) {
 
                     console.debug("complete node", { value, dir, base }, context)
 
-                    const [children, _] = await getChildren(client, dir);
+                    const [children] = await getChildren(client, dir);
                     const nodes = children
                         .filter(child => child.startsWith(base))
                         .map(child => path.join(dir, child));
@@ -43,7 +43,7 @@ export function registerResources(client: Client, server: McpServer) {
 
             console.debug("read node", { uri }, node, extra)
 
-            let [blob, _] = await getData(client, node);
+            const [blob] = await getData(client, node);
 
             return {
                 contents: [{

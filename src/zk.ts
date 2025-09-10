@@ -1,3 +1,4 @@
+import { promisify } from "util";
 import { createClient, Client, Stat } from "node-zookeeper-client";
 
 /**
@@ -80,6 +81,10 @@ export function connectToZooKeeper(connStr?: string, opts?: ZookeeperOptions): C
     return client
 }
 
+export function create(client: Client, path: string): Promise<string> {
+    return promisify<string, string>(client.create)(path);
+}
+
 export function getChildren(client: Client, dir: string): Promise<[string[], Stat]> {
     return new Promise<[string[], Stat]>((resolve, reject) => {
         client.getChildren(dir, (error, children, stat) => {
@@ -92,9 +97,9 @@ export function getChildren(client: Client, dir: string): Promise<[string[], Sta
     })
 }
 
-export function getData(client: Client, dir: string): Promise<[Buffer, Stat]> {
+export function getData(client: Client, path: string): Promise<[Buffer, Stat]> {
     return new Promise<[Buffer, Stat]>((resolve, reject) => {
-        client.getData(dir, (error, data, stat) => {
+        client.getData(path, (error, data, stat) => {
             if (error) {
                 reject(error)
             } else {
@@ -102,4 +107,44 @@ export function getData(client: Client, dir: string): Promise<[Buffer, Stat]> {
             }
         })
     })
+}
+
+export function setData(client: Client, path: string, data: Buffer): Promise<Stat> {
+    return promisify<string, Buffer, Stat>(client.setData)(path, data);
+}
+
+export function exists(client: Client, path: string): Promise<Stat> {
+    return promisify<string, Stat>(client.exists)(path);
+}
+
+export async function makeDirs(client: Client, path: string): Promise<string> {
+    const dirs: string[] = [];
+
+    for (let parts = path.split('/'); parts.length > 0; parts.pop()) {
+        const p = parts.join('/');
+
+        if (p === '') {
+            continue;
+        }
+
+        const stat = await exists(client, p);
+
+        if (stat) {
+            break;
+        }
+
+        dirs.push(p);
+    }
+
+    dirs.reverse();
+
+    const trans = client.transaction();
+
+    for (const dir of dirs) {
+        trans.create(dir);
+    }
+
+    await promisify(trans.commit)();
+
+    return path;
 }

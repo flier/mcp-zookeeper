@@ -2,9 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Client } from "node-zookeeper-client";
 
-import { runHttpServer, HttpServerOptions } from "./http.js";
 import { connectToZooKeeper, ZookeeperOptions } from "./zk.js";
+import { registerPrompts } from "./prompt.js";
 import { registerResources } from "./resource.js";
+import { registerTools } from "./tool.js";
+import { runHttpServer, HttpServerOptions } from "./http.js";
 
 export class Server extends McpServer {
     readonly client: Client;
@@ -22,6 +24,8 @@ export class Server extends McpServer {
         this.client = connectToZooKeeper(connStr, opts);
 
         registerResources(this.client, this);
+        registerTools(this.client, this);
+        registerPrompts(this.client, this);
     }
 
     async serveStdio() {
