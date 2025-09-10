@@ -24,9 +24,9 @@ const mockStat: Stat = {
     pzxid: Buffer.from([0, 0, 0, 0, 0, 0, 0, 1])
 };
 
-const mockTransaction = {
-    create: vi.fn(),
-    commit: vi.fn()
+let mockTransaction: {
+    create: ReturnType<typeof vi.fn>;
+    commit: ReturnType<typeof vi.fn>;
 };
 
 type MockClient = {
@@ -47,6 +47,11 @@ describe('zookeeper', () => {
     let mockClient: MockClient;
 
     beforeEach(() => {
+        mockTransaction = {
+            create: vi.fn(),
+            commit: vi.fn()
+        };
+
         mockClient = {
             connect: vi.fn(),
             addAuthInfo: vi.fn(),
@@ -65,7 +70,6 @@ describe('zookeeper', () => {
     });
 
     afterEach(() => {
-        vi.clearAllMocks();
         // Reset mockTransaction mocks
         mockTransaction.create.mockClear();
         mockTransaction.commit.mockClear();
@@ -324,6 +328,102 @@ describe('zookeeper', () => {
             mockClient.transaction.mockReturnValue(mockTransaction);
 
             await expect(makeDirs(mockClient as unknown as Client, path)).rejects.toThrow('Create failed');
+        });
+
+        it('should handle empty path', async () => {
+            const path = '';
+
+            const result = await makeDirs(mockClient as unknown as Client, path);
+
+            expect(result).toBe('');
+            expect(mockClient.exists).not.toHaveBeenCalled();
+            expect(mockClient.transaction).not.toHaveBeenCalled();
+        });
+
+        it('should handle root path', async () => {
+            const path = '/';
+
+            // Mock exists to return stat for root path (root always exists)
+            mockClient.exists.mockImplementation((path: string, callback: (error: Error | null, stat: Stat | null) => void) => {
+                callback(null, mockStat);
+            });
+
+            const result = await makeDirs(mockClient as unknown as Client, path);
+
+            expect(result).toBe('/');
+            expect(mockClient.exists).toHaveBeenCalledWith('/', expect.any(Function));
+            expect(mockClient.transaction).not.toHaveBeenCalled();
+        });
+
+        it('should handle single level path', async () => {
+            const path = '/test';
+
+            mockClient.exists.mockImplementation((path: string, callback: (error: Error | null, stat: Stat | null) => void) => {
+                callback(null, null);
+            });
+
+            mockTransaction.commit.mockImplementation((callback: (error: Error | null) => void) => {
+                callback(null);
+            });
+            mockClient.transaction.mockReturnValue(mockTransaction);
+
+            const result = await makeDirs(mockClient as unknown as Client, path);
+
+            expect(result).toBe('/test');
+            expect(mockClient.exists).toHaveBeenCalledWith('/test', expect.any(Function));
+            expect(mockClient.transaction).toHaveBeenCalledTimes(1);
+            expect(mockTransaction.create).toHaveBeenCalledWith('/test');
+        });
+    });
+
+    describe('Edge cases and error handling', () => {
+        it('should handle getChildren with empty children list', async () => {
+            const path = '/test';
+            mockClient.getChildren.mockImplementation((path: string, callback: (error: Error | null, children: string[], stat: Stat) => void) => {
+                callback(null, [], mockStat);
+            });
+
+            const [children] = await getChildren(mockClient as unknown as Client, path);
+
+            expect(children).toEqual([]);
+            expect(mockClient.getChildren).toHaveBeenCalledWith(path, expect.any(Function));
+        });
+
+        it('should handle getData with empty buffer', async () => {
+            const path = '/test';
+            const emptyBuffer = Buffer.alloc(0);
+            mockClient.getData.mockImplementation((path: string, callback: (error: Error | null, data: Buffer, stat: Stat) => void) => {
+                callback(null, emptyBuffer, mockStat);
+            });
+
+            const [data] = await getData(mockClient as unknown as Client, path);
+
+            expect(data).toEqual(emptyBuffer);
+            expect(data.length).toBe(0);
+        });
+
+        it('should handle setData with empty buffer', async () => {
+            const path = '/test';
+            const emptyBuffer = Buffer.alloc(0);
+            mockClient.setData.mockImplementation((path: string, data: Buffer, callback: (error: Error | null, stat: Stat) => void) => {
+                callback(null, mockStat);
+            });
+
+            await setData(mockClient as unknown as Client, path, emptyBuffer);
+
+            expect(mockClient.setData).toHaveBeenCalledWith(path, emptyBuffer, expect.any(Function));
+        });
+
+        it('should handle create with very long path', async () => {
+            const longPath = '/very/long/path/with/many/segments/that/goes/on/and/on/and/on';
+            mockClient.create.mockImplementation((path: string, callback: (error: Error | null, path: string) => void) => {
+                callback(null, path);
+            });
+
+            const result = await create(mockClient as unknown as Client, longPath);
+
+            expect(result).toBe(longPath);
+            expect(mockClient.create).toHaveBeenCalledWith(longPath, expect.any(Function));
         });
     });
 });

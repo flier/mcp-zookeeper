@@ -11,6 +11,8 @@ export default defineConfig({
             include: ['src/**/*.ts'],
             exclude: ['**/__tests__/**', '**/dist/**'],
         },
+        clearMocks: true,
+        mockReset: true,
     },
     resolve: {
         alias: {

@@ -8,9 +8,18 @@ import { registerResources } from "./resource.js";
 import { registerTools } from "./tool.js";
 import { runHttpServer, HttpServerOptions } from "./http.js";
 
+/**
+ * MCP ZooKeeper Server that provides tools and resources for interacting with ZooKeeper.
+ */
 export class Server extends McpServer {
     readonly client: Client;
 
+    /**
+     * Creates a new MCP ZooKeeper Server instance.
+     *
+     * @param connStr - The ZooKeeper connection string
+     * @param opts - Optional ZooKeeper client configuration
+     */
     constructor(connStr: string, opts?: ZookeeperOptions) {
         super({
             name: "zookeeper",
@@ -23,20 +32,27 @@ export class Server extends McpServer {
 
         this.client = connectToZooKeeper(connStr, opts);
 
+        // Register all MCP capabilities
         registerResources(this.client, this);
         registerTools(this.client, this);
         registerPrompts(this.client, this);
     }
 
-    async serveStdio() {
+    /**
+     * Starts the server using stdio transport.
+     */
+    async serveStdio(): Promise<void> {
         const transport = new StdioServerTransport();
-
         await this.connect(transport);
-
-        console.error("MCP Zookeeper Server running on stdio");
+        console.error("MCP ZooKeeper Server running on stdio");
     }
 
-    async serveHttp(options: HttpServerOptions) {
+    /**
+     * Starts the server using HTTP transport.
+     *
+     * @param options - HTTP server configuration options
+     */
+    async serveHttp(options: HttpServerOptions): Promise<void> {
         runHttpServer(this, options);
     }
 }

@@ -57,6 +57,13 @@ export type ZookeeperOptions = {
     auth?: AuthInfo,
 }
 
+/**
+ * Connects to a ZooKeeper cluster with the specified connection string and options.
+ *
+ * @param connStr - The ZooKeeper connection string (e.g., "localhost:2181" or "zk1:2181,zk2:2181")
+ * @param opts - Optional configuration for the ZooKeeper client
+ * @returns A connected ZooKeeper client instance
+ */
 export function connectToZooKeeper(connStr?: string, opts?: ZookeeperOptions): Client {
     const client = createClient(connStr ?? defaultServers, {
         sessionTimeout: opts?.sessionTimeout ?? defaultSessionTimeout,
@@ -70,81 +77,138 @@ export function connectToZooKeeper(connStr?: string, opts?: ZookeeperOptions): C
 
     client.connect();
 
-    client.once('connected', function () {
-        console.error('connected to ZooKeeper', { uri: connStr, session_id: client.getSessionId().toString('hex') });
+    client.once('connected', () => {
+        console.error('Connected to ZooKeeper', {
+            uri: connStr ?? defaultServers,
+            sessionId: client.getSessionId().toString('hex')
+        });
     });
 
-    client.on('state', function (state) {
-        console.error('client state changed to', state);
+    client.on('state', (state) => {
+        console.error('Client state changed to', state);
     });
 
-    return client
+    return client;
 }
 
+/**
+ * Creates a new node at the specified path.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param path - The path where the node should be created
+ * @returns A promise that resolves to the created path
+ */
 export function create(client: Client, path: string): Promise<string> {
     return promisify<string, string>(client.create)(path);
 }
 
+/**
+ * Gets the children of a node and their statistics.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param dir - The path of the parent node
+ * @returns A promise that resolves to a tuple of [children, stat]
+ */
 export function getChildren(client: Client, dir: string): Promise<[string[], Stat]> {
     return new Promise<[string[], Stat]>((resolve, reject) => {
         client.getChildren(dir, (error, children, stat) => {
             if (error) {
-                reject(error)
+                reject(error);
             } else {
-                resolve([children, stat])
+                resolve([children, stat]);
             }
-        })
-    })
+        });
+    });
 }
 
+/**
+ * Gets the data and statistics of a node.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param path - The path of the node
+ * @returns A promise that resolves to a tuple of [data, stat]
+ */
 export function getData(client: Client, path: string): Promise<[Buffer, Stat]> {
     return new Promise<[Buffer, Stat]>((resolve, reject) => {
         client.getData(path, (error, data, stat) => {
             if (error) {
-                reject(error)
+                reject(error);
             } else {
-                resolve([data, stat])
+                resolve([data, stat]);
             }
-        })
-    })
+        });
+    });
 }
 
+/**
+ * Sets the data of a node.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param path - The path of the node
+ * @param data - The data to set
+ * @returns A promise that resolves to the node statistics
+ */
 export function setData(client: Client, path: string, data: Buffer): Promise<Stat> {
     return promisify<string, Buffer, Stat>(client.setData)(path, data);
 }
 
-export function exists(client: Client, path: string): Promise<Stat> {
-    return promisify<string, Stat>(client.exists)(path);
+/**
+ * Checks if a node exists and returns its statistics.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param path - The path of the node to check
+ * @returns A promise that resolves to the node statistics if it exists, null otherwise
+ */
+export function exists(client: Client, path: string): Promise<Stat | null> {
+    return promisify<string, Stat | null>(client.exists)(path);
 }
 
+/**
+ * Creates a directory and all necessary parent directories using ZooKeeper transactions.
+ * This function ensures atomic creation of the entire directory structure.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param path - The path of the directory to create
+ * @returns A promise that resolves to the created path
+ */
 export async function makeDirs(client: Client, path: string): Promise<string> {
-    const dirs: string[] = [];
+    const dirsToCreate: string[] = [];
 
+    // Build the directory path by removing parts from the end
     for (let parts = path.split('/'); parts.length > 0; parts.pop()) {
-        const p = parts.join('/');
+        const currentPath = parts.join('/');
 
-        if (p === '') {
+        // Skip empty paths (root)
+        if (currentPath === '') {
             continue;
         }
 
-        const stat = await exists(client, p);
+        const stat = await exists(client, currentPath);
 
+        // If directory exists, stop checking parent directories
         if (stat) {
             break;
         }
 
-        dirs.push(p);
+        dirsToCreate.push(currentPath);
     }
 
-    dirs.reverse();
-
-    const trans = client.transaction();
-
-    for (const dir of dirs) {
-        trans.create(dir);
+    // If no directories to create, return the path
+    if (dirsToCreate.length === 0) {
+        return path;
     }
 
-    await promisify(trans.commit)();
+    // Reverse to create parent directories first
+    dirsToCreate.reverse();
+
+    // Use transaction for atomic directory creation
+    const transaction = client.transaction();
+
+    for (const dir of dirsToCreate) {
+        transaction.create(dir);
+    }
+
+    await promisify(transaction.commit)();
 
     return path;
 }
