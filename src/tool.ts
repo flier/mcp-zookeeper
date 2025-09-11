@@ -2,7 +2,7 @@ import { z } from "zod";
 import { fileTypeFromBuffer } from 'file-type';
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { Client, Path } from "node-zookeeper-client";
+import { Client } from "node-zookeeper-client";
 import { diff_match_patch, type Diff } from "diff-match-patch";
 
 import { getData, setData, makeDirs, getChildren, exists } from "./zk.js";
@@ -223,8 +223,6 @@ type GetNodeStatArgs = z.infer<typeof GetNodeStatArgsSchema>;
  * @returns The text content of the node
  */
 async function readTextNode(client: Client, { path, tail, head }: ReadTextNodeArgs): Promise<string> {
-    Path.validate(path)
-
     const [data] = await getData(client, path);
     const text = data.toString('utf-8');
 
@@ -247,8 +245,6 @@ async function readTextNode(client: Client, { path, tail, head }: ReadTextNodeAr
  * @returns A resource object with URI, MIME type, and base64 data
  */
 async function readBinaryNode(client: Client, { path }: ReadBinaryNodeArgs): Promise<Resource> {
-    Path.validate(path)
-
     const [data] = await getData(client, path);
     const fileType = await fileTypeFromBuffer(data);
 
@@ -267,8 +263,6 @@ async function readBinaryNode(client: Client, { path }: ReadBinaryNodeArgs): Pro
  * @returns Success message
  */
 async function writeNode(client: Client, { path, content, encoding }: WriteNodeArgs): Promise<string> {
-    Path.validate(path)
-
     const buffer = Buffer.from(content, (encoding as BufferEncoding) ?? "utf-8");
     await setData(client, path, buffer);
 
@@ -283,8 +277,6 @@ async function writeNode(client: Client, { path, content, encoding }: WriteNodeA
  * @returns The patch text showing changes made
  */
 async function editNode(client: Client, { path, diffs, dryRun }: EditNodeArgs): Promise<string> {
-    Path.validate(path)
-
     const [data] = await getData(client, path);
     const text = data.toString('utf-8');
 
@@ -307,8 +299,6 @@ async function editNode(client: Client, { path, diffs, dryRun }: EditNodeArgs): 
  * @returns Success message with the created path
  */
 async function createDirectory(client: Client, { path }: CreateDirectoryArgs): Promise<string> {
-    Path.validate(path)
-
     await makeDirs(client, path);
 
     return `Successfully created directory ${path}`;
@@ -334,8 +324,6 @@ async function createDirectory(client: Client, { path }: CreateDirectoryArgs): P
  * ```
  */
 async function listDirectory(client: Client, { path }: ListDirectoryArgs): Promise<string> {
-    Path.validate(path)
-
     const [children] = await getChildren(client, path);
 
     const s = [];
@@ -388,8 +376,6 @@ interface Entry {
  * ```
  */
 async function listDirectoryWithSizes(client: Client, { path, sortBy }: ListDirectoryWithSizesArgs): Promise<string> {
-    Path.validate(path)
-
     const [children] = await getChildren(client, path);
 
     const detailedEntries: Entry[] = [];
@@ -483,8 +469,6 @@ export function formatSize(bytes: number): string {
  * @returns A formatted string with the node stat
  */
 async function getNodeStat(client: Client, { path }: GetNodeStatArgs): Promise<string> {
-    Path.validate(path)
-
     const stat = await exists(client, path);
 
     if (!stat) {
