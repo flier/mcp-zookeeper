@@ -172,43 +172,5 @@ export function exists(client: Client, path: string): Promise<Stat | null> {
  * @returns A promise that resolves to the created path
  */
 export async function makeDirs(client: Client, path: string): Promise<string> {
-    const dirsToCreate: string[] = [];
-
-    // Build the directory path by removing parts from the end
-    for (let parts = path.split('/'); parts.length > 0; parts.pop()) {
-        const currentPath = parts.join('/');
-
-        // Skip empty paths (root)
-        if (currentPath === '') {
-            continue;
-        }
-
-        const stat = await exists(client, currentPath);
-
-        // If directory exists, stop checking parent directories
-        if (stat) {
-            break;
-        }
-
-        dirsToCreate.push(currentPath);
-    }
-
-    // If no directories to create, return the path
-    if (dirsToCreate.length === 0) {
-        return path;
-    }
-
-    // Reverse to create parent directories first
-    dirsToCreate.reverse();
-
-    // Use transaction for atomic directory creation
-    const transaction = client.transaction();
-
-    for (const dir of dirsToCreate) {
-        transaction.create(dir);
-    }
-
-    await promisify(transaction.commit)();
-
-    return path;
+    return await promisify<string, string>(client.mkdirp)(path);
 }

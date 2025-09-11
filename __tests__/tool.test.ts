@@ -53,7 +53,7 @@ describe('Tool Functions', () => {
         it('should register all tools with the server', () => {
             registerTools(mockClient, mockServer);
 
-            expect(mockServer.tool).toHaveBeenCalledTimes(5);
+            expect(mockServer.tool).toHaveBeenCalledTimes(6);
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'read_text_node',
                 expect.any(String),
