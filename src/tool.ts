@@ -40,12 +40,12 @@ const CreateDirectoryArgsSchema = z.object({
 });
 
 const ListDirectoryArgsSchema = z.object({
-    path: z.string(),
+    path: z.string().describe("The path to the directory to list"),
 });
 
 const ListDirectoryWithSizesArgsSchema = z.object({
-    path: z.string(),
-    sortBy: z.enum(['name', 'size']).optional().default('name').describe('Sort entries by name or size'),
+    path: z.string().describe("The path to the directory to list"),
+    sortBy: z.enum(['name', 'size']).optional().default('name').describe('Sort entries by name (ascending) or size (descending)'),
 });
 
 /**
@@ -123,6 +123,7 @@ export function registerTools(client: Client, server: McpServer): void {
         "Get a detailed listing of all nodes and directories in a specified path. " +
         "Results clearly distinguish between nodes and directories with [NODE] and [DIR] prefixes. " +
         "This tool is essential for understanding directory structure and finding specific files within a directory. " +
+        "Returns a simple list format without size information. " +
         "Only works within allowed directories.",
         ListDirectoryArgsSchema.shape,
         async ({ path }) => {
@@ -133,8 +134,11 @@ export function registerTools(client: Client, server: McpServer): void {
     server.tool(
         "list_directory_with_sizes",
         "Get a detailed listing of all nodes and directories in a specified path, including sizes. " +
-        "Results clearly distinguish between nodes and directories with [NODE] and [DIR] " +
-        "prefixes. This tool is useful for understanding directory structure and " +
+        "Results clearly distinguish between nodes and directories with [FILE] and [DIR] " +
+        "prefixes. Shows file sizes in human-readable format (B, KB, MB, GB, TB). " +
+        "Supports sorting by name (ascending) or size (descending). " +
+        "Includes summary statistics with total file count, directory count, and combined size. " +
+        "This tool is useful for understanding directory structure and " +
         "finding specific nodes within a directory. Only works within allowed directories.",
         ListDirectoryWithSizesArgsSchema.shape,
         async ({ path, sortBy }) => {
@@ -284,11 +288,23 @@ async function createDirectory(client: Client, { path }: CreateDirectoryArgs): P
 }
 
 /**
- * Lists the contents of a directory.
+ * Lists the contents of a directory in a simple format.
+ *
+ * Returns a list of entries with [NODE] or [DIR] prefixes to distinguish
+ * between files and directories. This is a lightweight alternative to
+ * listDirectoryWithSizes when size information is not needed.
  *
  * @param client - The ZooKeeper client instance
  * @param args - The list directory arguments
- * @returns The contents of the directory
+ * @returns A newline-separated string of directory entries with type prefixes
+ *
+ * @example
+ * ```
+ * // Returns:
+ * // [NODE] file1.txt
+ * // [DIR] subdirectory
+ * // [NODE] file2.txt
+ * ```
  */
 async function listDirectory(client: Client, { path }: ListDirectoryArgs): Promise<string> {
     const [children] = await getChildren(client, path);
@@ -306,13 +322,42 @@ async function listDirectory(client: Client, { path }: ListDirectoryArgs): Promi
     return s.join("\n");
 }
 
+/**
+ * Represents a directory entry with metadata.
+ */
 interface Entry {
+    /** The name of the entry */
     name: string;
+    /** Whether this entry is a directory */
     isDirectory: boolean;
+    /** The size of the entry in bytes (0 for directories) */
     size: number;
+    /** The modification time of the entry */
     mtime: Date;
 }
 
+/**
+ * Lists the contents of a directory with detailed size information and sorting options.
+ *
+ * Returns a formatted listing with file sizes, directory counts, and summary statistics.
+ * Supports sorting by name (ascending) or size (descending). File sizes are displayed
+ * in human-readable format (B, KB, MB, GB, TB).
+ *
+ * @param client - The ZooKeeper client instance
+ * @param args - The list directory with sizes arguments
+ * @returns A formatted string with directory contents, sizes, and summary statistics
+ *
+ * @example
+ * ```
+ * // Returns (sorted by name):
+ * // [DIR] subdirectory
+ * // [FILE] file1.txt                       100 B
+ * // [FILE] file2.txt                       2.00 MB
+ * //
+ * // Total: 2 files, 1 directories
+ * // Combined size: 2.00 MB
+ * ```
+ */
 async function listDirectoryWithSizes(client: Client, { path, sortBy }: ListDirectoryWithSizesArgs): Promise<string> {
     const [children] = await getChildren(client, path);
 
@@ -366,9 +411,28 @@ async function listDirectoryWithSizes(client: Client, { path, sortBy }: ListDire
     return [...formattedEntries, ...summary].join("\n")
 }
 
+/** Supported size units for human-readable formatting */
 const sizeUnits = ['B', 'KB', 'MB', 'GB', 'TB'];
 
-// Pure Utility Functions
+/**
+ * Formats a byte count into a human-readable string with appropriate units.
+ *
+ * Converts bytes to the most appropriate unit (B, KB, MB, GB, TB) and formats
+ * the number with 2 decimal places for units larger than bytes. Handles edge
+ * cases like zero and negative numbers.
+ *
+ * @param bytes - The number of bytes to format
+ * @returns A formatted string with the size and unit
+ *
+ * @example
+ * ```
+ * formatSize(0)        // "0 B"
+ * formatSize(1024)     // "1.00 KB"
+ * formatSize(1536)     // "1.50 KB"
+ * formatSize(1048576)  // "1.00 MB"
+ * formatSize(-100)     // "0 B" (negative numbers treated as 0)
+ * ```
+ */
 export function formatSize(bytes: number): string {
     if (bytes <= 0) return '0 B';
 
