@@ -14,6 +14,16 @@ vi.mock('../src/zk', () => ({
     exists: vi.fn(),
 }));
 
+vi.mock('node-zookeeper-client', async () => {
+    const actual = await vi.importActual('node-zookeeper-client');
+    return {
+        ...actual,
+        Path: {
+            validate: vi.fn(),
+        },
+    };
+});
+
 vi.mock('file-type', () => ({
     fileTypeFromBuffer: vi.fn(),
 }));
@@ -43,12 +53,20 @@ const mockStat: Stat = {
 describe('Tool Functions', () => {
     let mockClient: Client;
     let mockServer: McpServer;
+    let Path: { validate: ReturnType<typeof vi.fn> };
 
-    beforeEach(() => {
+    beforeEach(async () => {
         mockClient = {} as Client;
         mockServer = {
             tool: vi.fn(),
         } as unknown as McpServer;
+
+        // Reset all mocks
+        vi.clearAllMocks();
+
+        // Get the mocked Path from the mocked module
+        const nodeZookeeperClient = await import('node-zookeeper-client');
+        Path = (nodeZookeeperClient as unknown as { Path: { validate: ReturnType<typeof vi.fn> } }).Path;
     });
 
     describe('registerTools', () => {
@@ -130,6 +148,7 @@ describe('Tool Functions', () => {
                     content: [{ type: 'text', text: 'line1\nline2\nline3' }]
                 });
                 expect(getData).toHaveBeenCalledWith(mockClient, '/test/node');
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
 
             it('should read text content with head filtering', async () => {
@@ -142,6 +161,7 @@ describe('Tool Functions', () => {
                 expect(result).toEqual({
                     content: [{ type: 'text', text: 'line1\nline2' }]
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
 
             it('should read text content with tail filtering', async () => {
@@ -154,6 +174,7 @@ describe('Tool Functions', () => {
                 expect(result).toEqual({
                     content: [{ type: 'text', text: 'line3\nline4' }]
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
 
             it('should handle errors gracefully', async () => {
@@ -167,6 +188,7 @@ describe('Tool Functions', () => {
                     content: [{ type: 'text', text: 'Error: Node not found' }],
                     isError: true
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
         });
 
@@ -192,6 +214,7 @@ describe('Tool Functions', () => {
                         }
                     }]
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test/binary');
             });
 
             it('should handle unknown MIME type', async () => {
@@ -214,6 +237,7 @@ describe('Tool Functions', () => {
                         }
                     }]
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test/binary');
             });
         });
 
@@ -235,6 +259,7 @@ describe('Tool Functions', () => {
                     '/test/node',
                     Buffer.from('test content', 'utf-8')
                 );
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
 
             it('should write text content with custom encoding', async () => {
@@ -255,6 +280,7 @@ describe('Tool Functions', () => {
                     '/test/node',
                     Buffer.from('test content', 'utf16le')
                 );
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
         });
 
@@ -290,6 +316,7 @@ describe('Tool Functions', () => {
                     '/test/node',
                     Buffer.from(mockContent, 'utf-8')
                 );
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
 
             it('should preview changes in dry run mode', async () => {
@@ -318,6 +345,7 @@ describe('Tool Functions', () => {
                     content: [{ type: 'text', text: 'patch text' }]
                 });
                 expect(setData).not.toHaveBeenCalled();
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
         });
 
@@ -332,6 +360,7 @@ describe('Tool Functions', () => {
                     content: [{ type: 'text', text: 'Successfully created directory /test/dir' }]
                 });
                 expect(makeDirs).toHaveBeenCalledWith(mockClient, '/test/dir');
+                expect(Path.validate).toHaveBeenCalledWith('/test/dir');
             });
 
             it('should handle directory creation errors', async () => {
@@ -345,6 +374,7 @@ describe('Tool Functions', () => {
                     content: [{ type: 'text', text: 'Error: Permission denied' }],
                     isError: true
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test/dir');
             });
         });
 
@@ -370,6 +400,7 @@ describe('Tool Functions', () => {
                 expect(exists).toHaveBeenCalledWith(mockClient, '/test/file1.txt');
                 expect(exists).toHaveBeenCalledWith(mockClient, '/test/dir1');
                 expect(exists).toHaveBeenCalledWith(mockClient, '/test/file2.txt');
+                expect(Path.validate).toHaveBeenCalledWith('/test');
             });
 
             it('should handle empty directory', async () => {
@@ -384,6 +415,7 @@ describe('Tool Functions', () => {
                 expect(result).toEqual({
                     content: [{ type: 'text', text: '' }]
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test');
             });
 
             it('should handle errors gracefully', async () => {
@@ -397,6 +429,7 @@ describe('Tool Functions', () => {
                     content: [{ type: 'text', text: 'Error: Directory not found' }],
                     isError: true
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test');
             });
         });
 
@@ -438,6 +471,7 @@ describe('Tool Functions', () => {
                         'Combined size: 300 B'
                     ].join('\n')
                 );
+                expect(Path.validate).toHaveBeenCalledWith('/test');
             });
 
             it('should list directory contents with sizes sorted by size', async () => {
@@ -469,6 +503,7 @@ describe('Tool Functions', () => {
                         'Combined size: 300 B'
                     ].join('\n')
                 );
+                expect(Path.validate).toHaveBeenCalledWith('/test');
             });
 
             it('should handle empty directory', async () => {
@@ -490,6 +525,7 @@ describe('Tool Functions', () => {
                         'Combined size: 0 B'
                     ].join('\n')
                 );
+                expect(Path.validate).toHaveBeenCalledWith('/test');
             });
 
             it('should format different size units correctly', async () => {
@@ -527,6 +563,7 @@ describe('Tool Functions', () => {
                         'Combined size: 2.00 MB'
                     ].join('\n')
                 );
+                expect(Path.validate).toHaveBeenCalledWith('/test');
             });
 
             it('should handle errors gracefully', async () => {
@@ -540,6 +577,7 @@ describe('Tool Functions', () => {
                     content: [{ type: 'text', text: 'Error: Directory not found' }],
                     isError: true
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/test');
             });
         });
 
@@ -577,6 +615,7 @@ describe('Tool Functions', () => {
                 );
 
                 expect(exists).toHaveBeenCalledWith(mockClient, '/test/node');
+                expect(Path.validate).toHaveBeenCalledWith('/test/node');
             });
 
             it('should return not exist message when node is missing', async () => {
@@ -588,6 +627,7 @@ describe('Tool Functions', () => {
                 expect(result).toEqual({
                     content: [{ type: 'text', text: 'Node does not exist' }]
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/missing');
             });
 
             it('should handle errors gracefully', async () => {
@@ -600,6 +640,61 @@ describe('Tool Functions', () => {
                     content: [{ type: 'text', text: 'Error: Stat error' }],
                     isError: true
                 });
+                expect(Path.validate).toHaveBeenCalledWith('/error');
+            });
+        });
+
+        describe('path validation', () => {
+            it('should return error when Path.validate fails in read_text_node', async () => {
+                Path.validate.mockImplementationOnce(() => { throw new Error('Invalid path'); });
+
+                const handler = toolHandlers.find(h => h.name === 'read_text_node')!.handler;
+                const result = await handler({ path: '/invalid' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Invalid path' }],
+                    isError: true
+                });
+                expect(getData).not.toHaveBeenCalled();
+            });
+
+            it('should return error when Path.validate fails in create_directory', async () => {
+                Path.validate.mockImplementationOnce(() => { throw new Error('Invalid path'); });
+
+                const handler = toolHandlers.find(h => h.name === 'create_directory')!.handler;
+                const result = await handler({ path: '/invalid' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Invalid path' }],
+                    isError: true
+                });
+                expect(makeDirs).not.toHaveBeenCalled();
+            });
+
+            it('should return error when Path.validate fails in list_directory_with_sizes', async () => {
+                Path.validate.mockImplementationOnce(() => { throw new Error('Invalid path'); });
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_with_sizes')!.handler;
+                const result = await handler({ path: '/invalid', sortBy: 'name' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Invalid path' }],
+                    isError: true
+                });
+                expect(getChildren).not.toHaveBeenCalled();
+            });
+
+            it('should return error when Path.validate fails in get_node_stat', async () => {
+                Path.validate.mockImplementationOnce(() => { throw new Error('Invalid path'); });
+
+                const handler = toolHandlers.find(h => h.name === 'get_node_stat')!.handler;
+                const result = await handler({ path: '/invalid' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Invalid path' }],
+                    isError: true
+                });
+                expect(exists).not.toHaveBeenCalled();
             });
         });
     });
