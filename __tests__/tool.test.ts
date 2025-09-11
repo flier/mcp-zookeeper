@@ -27,10 +27,10 @@ vi.mock('diff-match-patch', () => ({
 }));
 
 const mockStat: Stat = {
-    czxid: Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]),
-    mzxid: Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]),
-    ctime: Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]),
-    mtime: Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]),
+    czxid: Buffer.from([0, 0, 0, 0, 0, 0, 0, 3]), // 3
+    mzxid: Buffer.from([0, 0, 0, 0, 0, 0, 0, 4]), // 4
+    ctime: Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]), // 0 (epoch)
+    mtime: Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]), // 0 (epoch)
     version: 0,
     cversion: 0,
     aversion: 0,
@@ -55,7 +55,7 @@ describe('Tool Functions', () => {
         it('should register all tools with the server', () => {
             registerTools(mockClient, mockServer);
 
-            expect(mockServer.tool).toHaveBeenCalledTimes(7);
+            expect(mockServer.tool).toHaveBeenCalledTimes(8);
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'read_text_node',
                 expect.any(String),
@@ -94,6 +94,12 @@ describe('Tool Functions', () => {
             );
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'list_directory_with_sizes',
+                expect.any(String),
+                expect.any(Object),
+                expect.any(Function)
+            );
+            expect(mockServer.tool).toHaveBeenCalledWith(
+                'get_node_stat',
                 expect.any(String),
                 expect.any(Object),
                 expect.any(Function)
@@ -532,6 +538,66 @@ describe('Tool Functions', () => {
 
                 expect(result).toEqual({
                     content: [{ type: 'text', text: 'Error: Directory not found' }],
+                    isError: true
+                });
+            });
+        });
+
+        describe('get_node_stat', () => {
+            it('should return formatted stat for existing node', async () => {
+                const stat = {
+                    ...mockStat,
+                    mtime: Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]),
+                    ctime: Buffer.from([0, 0, 0, 0, 0, 0, 0, 2]),
+                    czxid: Buffer.from([0, 0, 0, 0, 0, 0, 0, 3]),
+                    mzxid: Buffer.from([0, 0, 0, 0, 0, 0, 0, 4]),
+                    dataLength: 123,
+                    numChildren: 2,
+                    version: 0,
+                    cversion: 0,
+                } as Stat;
+
+                vi.mocked(exists).mockResolvedValue(stat);
+
+                const handler = toolHandlers.find(h => h.name === 'get_node_stat')!.handler;
+                const result = await handler({ path: '/test/node' });
+
+                expect(result.content[0].text as string).toBe(
+                    [
+                        'Node: /test/node',
+                        'Creation Zxid: 3',
+                        'Last Modified Zxid: 4',
+                        'Creation Time: Thu, 01 Jan 1970 00:00:00 GMT',
+                        'Last Modified Time: Thu, 01 Jan 1970 00:00:00 GMT',
+                        'Version: 0',
+                        'Creation Version: 0',
+                        'Children: 2',
+                        'Size: 123'
+                    ].join('\n')
+                );
+
+                expect(exists).toHaveBeenCalledWith(mockClient, '/test/node');
+            });
+
+            it('should return not exist message when node is missing', async () => {
+                vi.mocked(exists).mockResolvedValue(null);
+
+                const handler = toolHandlers.find(h => h.name === 'get_node_stat')!.handler;
+                const result = await handler({ path: '/missing' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Node does not exist' }]
+                });
+            });
+
+            it('should handle errors gracefully', async () => {
+                vi.mocked(exists).mockRejectedValue(new Error('Stat error'));
+
+                const handler = toolHandlers.find(h => h.name === 'get_node_stat')!.handler;
+                const result = await handler({ path: '/error' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Stat error' }],
                     isError: true
                 });
             });

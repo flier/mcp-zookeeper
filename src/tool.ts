@@ -48,6 +48,10 @@ const ListDirectoryWithSizesArgsSchema = z.object({
     sortBy: z.enum(['name', 'size']).optional().default('name').describe('Sort entries by name (ascending) or size (descending)'),
 });
 
+const GetNodeStatArgsSchema = z.object({
+    path: z.string().describe("The path to the node to get the stat of"),
+});
+
 /**
  * Registers all available tools with the MCP server.
  *
@@ -145,6 +149,18 @@ export function registerTools(client: Client, server: McpServer): void {
             return await callTool(listDirectoryWithSizes, client, { path, sortBy });
         }
     )
+
+    server.tool(
+        "get_node_stat",
+        "Retrieve detailed metadata about a node or directory. " +
+        "Returns comprehensive information including size, creation time, last modified time, permissions, and type. " +
+        "This tool is perfect for understanding file characteristics without reading the actual content. " +
+        "Only works within allowed directories.",
+        GetNodeStatArgsSchema.shape,
+        async ({ path }) => {
+            return await callTool(getNodeStat, client, { path });
+        }
+    )
 }
 
 /**
@@ -197,6 +213,7 @@ type EditNodeArgs = z.infer<typeof EditNodeArgsSchema>;
 type CreateDirectoryArgs = z.infer<typeof CreateDirectoryArgsSchema>;
 type ListDirectoryArgs = z.infer<typeof ListDirectoryArgsSchema>;
 type ListDirectoryWithSizesArgs = z.infer<typeof ListDirectoryWithSizesArgsSchema>;
+type GetNodeStatArgs = z.infer<typeof GetNodeStatArgsSchema>;
 
 /**
  * Reads a node as text with optional line filtering.
@@ -442,4 +459,31 @@ export function formatSize(bytes: number): string {
 
     const unitIndex = Math.min(i, sizeUnits.length - 1);
     return `${(bytes / Math.pow(1024, unitIndex)).toFixed(2)} ${sizeUnits[unitIndex]}`;
+}
+
+/**
+ * Retrieves detailed metadata about a node or directory.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param args - The get node stat arguments
+ * @returns A formatted string with the node stat
+ */
+async function getNodeStat(client: Client, { path }: GetNodeStatArgs): Promise<string> {
+    const stat = await exists(client, path);
+
+    if (!stat) {
+        return "Node does not exist";
+    }
+
+    return [
+        `Node: ${path}`,
+        `Creation Zxid: ${stat.czxid.readBigInt64BE()}`,
+        `Last Modified Zxid: ${stat.mzxid.readBigInt64BE()}`,
+        `Creation Time: ${new Date(Number(stat.ctime.readBigInt64BE())).toUTCString()}`,
+        `Last Modified Time: ${new Date(Number(stat.mtime.readBigInt64BE())).toUTCString()}`,
+        `Version: ${stat.version}`,
+        `Creation Version: ${stat.cversion}`,
+        `Children: ${stat.numChildren}`,
+        `Size: ${stat.dataLength}`,
+    ].join('\n');
 }
