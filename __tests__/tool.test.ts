@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { registerTools } from '../src/tool';
+import { registerTools, formatSize } from '../src/tool';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from 'node-zookeeper-client';
-import { getData, setData, makeDirs } from '../src/zk';
+import { getData, setData, makeDirs, getChildren, exists } from '../src/zk';
 import type { Stat } from 'node-zookeeper-client';
 
 // Mock dependencies
@@ -10,6 +10,8 @@ vi.mock('../src/zk', () => ({
     getData: vi.fn(),
     setData: vi.fn(),
     makeDirs: vi.fn(),
+    getChildren: vi.fn(),
+    exists: vi.fn(),
 }));
 
 vi.mock('file-type', () => ({
@@ -53,7 +55,7 @@ describe('Tool Functions', () => {
         it('should register all tools with the server', () => {
             registerTools(mockClient, mockServer);
 
-            expect(mockServer.tool).toHaveBeenCalledTimes(6);
+            expect(mockServer.tool).toHaveBeenCalledTimes(7);
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'read_text_node',
                 expect.any(String),
@@ -80,6 +82,18 @@ describe('Tool Functions', () => {
             );
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'create_directory',
+                expect.any(String),
+                expect.any(Object),
+                expect.any(Function)
+            );
+            expect(mockServer.tool).toHaveBeenCalledWith(
+                'list_directory',
+                expect.any(String),
+                expect.any(Object),
+                expect.any(Function)
+            );
+            expect(mockServer.tool).toHaveBeenCalledWith(
+                'list_directory_with_sizes',
                 expect.any(String),
                 expect.any(Object),
                 expect.any(Function)
@@ -326,6 +340,241 @@ describe('Tool Functions', () => {
                     isError: true
                 });
             });
+        });
+
+        describe('list_directory', () => {
+            it('should list directory contents with nodes and directories', async () => {
+                const mockChildren = ['file1.txt', 'dir1', 'file2.txt'];
+                const mockDirStat = { ...mockStat, numChildren: 2 };
+                const mockFileStat = { ...mockStat, numChildren: 0 };
+
+                vi.mocked(getChildren).mockResolvedValue([mockChildren, mockDirStat]);
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockFileStat) // file1.txt
+                    .mockResolvedValueOnce(mockDirStat)  // dir1
+                    .mockResolvedValueOnce(mockFileStat); // file2.txt
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory')!.handler;
+                const result = await handler({ path: '/test' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: '[NODE] file1.txt\n[DIR] dir1\n[NODE] file2.txt' }]
+                });
+                expect(getChildren).toHaveBeenCalledWith(mockClient, '/test');
+                expect(exists).toHaveBeenCalledWith(mockClient, '/test/file1.txt');
+                expect(exists).toHaveBeenCalledWith(mockClient, '/test/dir1');
+                expect(exists).toHaveBeenCalledWith(mockClient, '/test/file2.txt');
+            });
+
+            it('should handle empty directory', async () => {
+                const mockChildren: string[] = [];
+                const mockDirStat = { ...mockStat, numChildren: 0 };
+
+                vi.mocked(getChildren).mockResolvedValue([mockChildren, mockDirStat]);
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory')!.handler;
+                const result = await handler({ path: '/test' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: '' }]
+                });
+            });
+
+            it('should handle errors gracefully', async () => {
+                const error = new Error('Directory not found');
+                vi.mocked(getChildren).mockRejectedValue(error);
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory')!.handler;
+                const result = await handler({ path: '/test' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Directory not found' }],
+                    isError: true
+                });
+            });
+        });
+
+        describe('list_directory_with_sizes', () => {
+            it('should list directory contents with sizes sorted by name', async () => {
+                const mockChildren = ['file1.txt', 'dir1', 'file2.txt'];
+                const mockDirStat = { ...mockStat, numChildren: 2, dataLength: 0 };
+                const mockFileStat1 = { ...mockStat, numChildren: 0, dataLength: 100 };
+                const mockFileStat2 = { ...mockStat, numChildren: 0, dataLength: 200 };
+
+                vi.mocked(getChildren).mockResolvedValue([mockChildren, mockDirStat]);
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockFileStat1) // file1.txt
+                    .mockResolvedValueOnce(mockDirStat)   // dir1
+                    .mockResolvedValueOnce(mockFileStat2); // file2.txt
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_with_sizes')!.handler;
+                const result = await handler({ path: '/test', sortBy: 'name' });
+
+                expect(result.content[0].text).toContain('[DIR] dir1');
+                expect(result.content[0].text).toContain('[FILE] file1.txt');
+                expect(result.content[0].text).toContain('[FILE] file2.txt');
+                expect(result.content[0].text).toContain('Total: 2 files, 1 directories');
+                expect(result.content[0].text).toContain('Combined size: 300 B');
+
+                // Verify specific size formatting
+                expect(result.content[0].text).toContain('100 B'); // file1.txt size
+                expect(result.content[0].text).toContain('200 B'); // file2.txt size
+                expect(result.content[0].text).toContain('dir1'); // directory without size
+
+                // 修正断言，移除多余的内容，只断言格式化输出的内容
+                expect(result.content[0].text).toBe(
+                    [
+                        '[DIR] dir1                           ',
+                        '[FILE] file1.txt                           100 B',
+                        '[FILE] file2.txt                           200 B',
+                        '',
+                        'Total: 2 files, 1 directories',
+                        'Combined size: 300 B'
+                    ].join('\n')
+                );
+            });
+
+            it('should list directory contents with sizes sorted by size', async () => {
+                const mockChildren = ['file1.txt', 'dir1', 'file2.txt'];
+                const mockDirStat = { ...mockStat, numChildren: 2, dataLength: 0 };
+                const mockFileStat1 = { ...mockStat, numChildren: 0, dataLength: 100 };
+                const mockFileStat2 = { ...mockStat, numChildren: 0, dataLength: 200 };
+
+                vi.mocked(getChildren).mockResolvedValue([mockChildren, mockDirStat]);
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockFileStat1) // file1.txt
+                    .mockResolvedValueOnce(mockDirStat)   // dir1
+                    .mockResolvedValueOnce(mockFileStat2); // file2.txt
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_with_sizes')!.handler;
+                const result = await handler({ path: '/test', sortBy: 'size' });
+
+                expect(result.content[0].text).toContain('[FILE] file2.txt');
+                expect(result.content[0].text).toContain('[FILE] file1.txt');
+                expect(result.content[0].text).toContain('[DIR] dir1');
+
+                expect(result.content[0].text).toBe(
+                    [
+                        '[FILE] file2.txt                           200 B',
+                        '[FILE] file1.txt                           100 B',
+                        '[DIR] dir1                           ',
+                        '',
+                        'Total: 2 files, 1 directories',
+                        'Combined size: 300 B'
+                    ].join('\n')
+                );
+            });
+
+            it('should handle empty directory', async () => {
+                const mockChildren: string[] = [];
+                const mockDirStat = { ...mockStat, numChildren: 0, dataLength: 0 };
+
+                vi.mocked(getChildren).mockResolvedValue([mockChildren, mockDirStat]);
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_with_sizes')!.handler;
+                const result = await handler({ path: '/test' });
+
+                expect(result.content[0].text).toContain('Total: 0 files, 0 directories');
+                expect(result.content[0].text).toContain('Combined size: 0 B');
+
+                expect(result.content[0].text).toBe(
+                    [
+                        '',
+                        'Total: 0 files, 0 directories',
+                        'Combined size: 0 B'
+                    ].join('\n')
+                );
+            });
+
+            it('should format different size units correctly', async () => {
+                const mockChildren = ['small.txt', 'medium.txt', 'large.txt', 'dir1'];
+                const mockDirStat = { ...mockStat, numChildren: 1, dataLength: 0 };
+                const mockSmallFile = { ...mockStat, numChildren: 0, dataLength: 512 }; // 512 B
+                const mockMediumFile = { ...mockStat, numChildren: 0, dataLength: 1024 * 1.5 }; // 1.5 KB
+                const mockLargeFile = { ...mockStat, numChildren: 0, dataLength: 1024 * 1024 * 2 }; // 2 MB
+
+                vi.mocked(getChildren).mockResolvedValue([mockChildren, mockDirStat]);
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockSmallFile)  // small.txt
+                    .mockResolvedValueOnce(mockMediumFile) // medium.txt
+                    .mockResolvedValueOnce(mockLargeFile)  // large.txt
+                    .mockResolvedValueOnce(mockDirStat);   // dir1
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_with_sizes')!.handler;
+                const result = await handler({ path: '/test', sortBy: 'name' });
+
+                expect(result.content[0].text).toContain('512 B'); // small.txt
+                expect(result.content[0].text).toContain('1.50 KB'); // medium.txt
+                expect(result.content[0].text).toContain('2.00 MB'); // large.txt
+                expect(result.content[0].text).toContain('[DIR] dir1'); // directory without size
+                expect(result.content[0].text).toContain('Total: 3 files, 1 directories');
+                expect(result.content[0].text).toContain('Combined size: 2.00 MB');
+
+                expect(result.content[0].text).toBe(
+                    [
+                        '[DIR] dir1                           ',
+                        '[FILE] large.txt                         2.00 MB',
+                        '[FILE] medium.txt                        1.50 KB',
+                        '[FILE] small.txt                           512 B',
+                        '',
+                        'Total: 3 files, 1 directories',
+                        'Combined size: 2.00 MB'
+                    ].join('\n')
+                );
+            });
+
+            it('should handle errors gracefully', async () => {
+                const error = new Error('Directory not found');
+                vi.mocked(getChildren).mockRejectedValue(error);
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_with_sizes')!.handler;
+                const result = await handler({ path: '/test' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Directory not found' }],
+                    isError: true
+                });
+            });
+        });
+    });
+
+    describe('formatSize', () => {
+        it('should format bytes correctly', () => {
+            expect(formatSize(0)).toBe('0 B');
+            expect(formatSize(1)).toBe('1 B');
+            expect(formatSize(1023)).toBe('1023 B');
+        });
+
+        it('should format kilobytes correctly', () => {
+            expect(formatSize(1024)).toBe('1.00 KB');
+            expect(formatSize(1536)).toBe('1.50 KB');
+            expect(formatSize(2048)).toBe('2.00 KB');
+        });
+
+        it('should format megabytes correctly', () => {
+            expect(formatSize(1024 * 1024)).toBe('1.00 MB');
+            expect(formatSize(1024 * 1024 * 1.5)).toBe('1.50 MB');
+            expect(formatSize(1024 * 1024 * 2)).toBe('2.00 MB');
+        });
+
+        it('should format gigabytes correctly', () => {
+            expect(formatSize(1024 * 1024 * 1024)).toBe('1.00 GB');
+            expect(formatSize(1024 * 1024 * 1024 * 1.5)).toBe('1.50 GB');
+        });
+
+        it('should format terabytes correctly', () => {
+            expect(formatSize(1024 * 1024 * 1024 * 1024)).toBe('1.00 TB');
+            expect(formatSize(1024 * 1024 * 1024 * 1024 * 2.5)).toBe('2.50 TB');
+        });
+
+        it('should handle very large numbers', () => {
+            const veryLarge = 1024 * 1024 * 1024 * 1024 * 1024; // 1 PB
+            expect(formatSize(veryLarge)).toBe('1024.00 TB');
+        });
+
+        it('should handle negative numbers', () => {
+            expect(formatSize(-1)).toBe('0 B');
+            expect(formatSize(-1024)).toBe('0 B');
         });
     });
 });

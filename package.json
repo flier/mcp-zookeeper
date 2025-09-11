@@ -19,9 +19,10 @@
     "lint": "eslint .",
     "inspector": "pnpx @modelcontextprotocol/inspector node dist/index.js",
     "server": "node dist/index.js",
-    "test": "vitest",
+    "test": "vitest --run",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
+    "test:watch": "vitest --watch",
     "test:coverage": "vitest run --coverage"
   },
   "keywords": [

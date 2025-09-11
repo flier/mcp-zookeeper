@@ -5,7 +5,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { Client } from "node-zookeeper-client";
 import { diff_match_patch, type Diff } from "diff-match-patch";
 
-import { getData, setData, makeDirs } from "./zk.js";
+import { getData, setData, makeDirs, getChildren, exists } from "./zk.js";
 
 // Schema definitions for tool arguments
 const ReadTextNodeArgsSchema = z.object({
@@ -37,6 +37,15 @@ const EditNodeArgsSchema = z.object({
 
 const CreateDirectoryArgsSchema = z.object({
     path: z.string().describe("The path to the directory to create")
+});
+
+const ListDirectoryArgsSchema = z.object({
+    path: z.string(),
+});
+
+const ListDirectoryWithSizesArgsSchema = z.object({
+    path: z.string(),
+    sortBy: z.enum(['name', 'size']).optional().default('name').describe('Sort entries by name or size'),
 });
 
 /**
@@ -108,6 +117,30 @@ export function registerTools(client: Client, server: McpServer): void {
             return await callTool(createDirectory, client, { path });
         }
     );
+
+    server.tool(
+        "list_directory",
+        "Get a detailed listing of all nodes and directories in a specified path. " +
+        "Results clearly distinguish between nodes and directories with [NODE] and [DIR] prefixes. " +
+        "This tool is essential for understanding directory structure and finding specific files within a directory. " +
+        "Only works within allowed directories.",
+        ListDirectoryArgsSchema.shape,
+        async ({ path }) => {
+            return await callTool(listDirectory, client, { path });
+        }
+    )
+
+    server.tool(
+        "list_directory_with_sizes",
+        "Get a detailed listing of all nodes and directories in a specified path, including sizes. " +
+        "Results clearly distinguish between nodes and directories with [NODE] and [DIR] " +
+        "prefixes. This tool is useful for understanding directory structure and " +
+        "finding specific nodes within a directory. Only works within allowed directories.",
+        ListDirectoryWithSizesArgsSchema.shape,
+        async ({ path, sortBy }) => {
+            return await callTool(listDirectoryWithSizes, client, { path, sortBy });
+        }
+    )
 }
 
 /**
@@ -158,6 +191,8 @@ type ReadBinaryNodeArgs = z.infer<typeof ReadBinaryNodeArgsSchema>;
 type WriteNodeArgs = z.infer<typeof WriteNodeArgsSchema>;
 type EditNodeArgs = z.infer<typeof EditNodeArgsSchema>;
 type CreateDirectoryArgs = z.infer<typeof CreateDirectoryArgsSchema>;
+type ListDirectoryArgs = z.infer<typeof ListDirectoryArgsSchema>;
+type ListDirectoryWithSizesArgs = z.infer<typeof ListDirectoryWithSizesArgsSchema>;
 
 /**
  * Reads a node as text with optional line filtering.
@@ -244,5 +279,103 @@ async function editNode(client: Client, { path, diffs, dryRun }: EditNodeArgs): 
  */
 async function createDirectory(client: Client, { path }: CreateDirectoryArgs): Promise<string> {
     await makeDirs(client, path);
+
     return `Successfully created directory ${path}`;
+}
+
+/**
+ * Lists the contents of a directory.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param args - The list directory arguments
+ * @returns The contents of the directory
+ */
+async function listDirectory(client: Client, { path }: ListDirectoryArgs): Promise<string> {
+    const [children] = await getChildren(client, path);
+
+    const s = [];
+
+    for (const child of children) {
+        const stat = await exists(client, path + "/" + child);
+
+        if (stat) {
+            s.push(`${stat.numChildren > 0 ? "[DIR]" : "[NODE]"} ${child}`);
+        }
+    }
+
+    return s.join("\n");
+}
+
+interface Entry {
+    name: string;
+    isDirectory: boolean;
+    size: number;
+    mtime: Date;
+}
+
+async function listDirectoryWithSizes(client: Client, { path, sortBy }: ListDirectoryWithSizesArgs): Promise<string> {
+    const [children] = await getChildren(client, path);
+
+    const detailedEntries: Entry[] = [];
+
+    for (const child of children) {
+        const stat = await exists(client, path + "/" + child);
+
+        if (stat) {
+            detailedEntries.push({
+                name: child,
+                isDirectory: stat.numChildren > 0,
+                size: stat.dataLength,
+                mtime: new Date(Number(stat.mtime))
+            });
+        } else {
+            detailedEntries.push({
+                name: child,
+                isDirectory: false,
+                size: 0,
+                mtime: new Date(0)
+            });
+        }
+    }
+
+    // Sort entries based on sortBy parameter
+    const sortedEntries = [...detailedEntries].sort((a, b) => {
+        if (sortBy === 'size') {
+            return b.size - a.size; // Descending by size
+        }
+        // Default sort by name
+        return a.name.localeCompare(b.name);
+    });
+
+    // Format the output
+    const formattedEntries = sortedEntries.map(entry =>
+        `${entry.isDirectory ? "[DIR]" : "[FILE]"} ${entry.name.padEnd(30)} ${entry.isDirectory ? "" : formatSize(entry.size).padStart(10)}`
+    );
+
+    // Add summary
+    const totalFiles = detailedEntries.filter(e => !e.isDirectory).length;
+    const totalDirs = detailedEntries.filter(e => e.isDirectory).length;
+    const totalSize = detailedEntries.reduce((sum, entry) => sum + (entry.isDirectory ? 0 : entry.size), 0);
+
+    const summary = [
+        "",
+        `Total: ${totalFiles} files, ${totalDirs} directories`,
+        `Combined size: ${formatSize(totalSize)}`
+    ];
+
+    return [...formattedEntries, ...summary].join("\n")
+}
+
+const sizeUnits = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+// Pure Utility Functions
+export function formatSize(bytes: number): string {
+    if (bytes <= 0) return '0 B';
+
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+
+    if (i < 0 || i === 0) return `${bytes} ${sizeUnits[0]}`;
+
+    const unitIndex = Math.min(i, sizeUnits.length - 1);
+    return `${(bytes / Math.pow(1024, unitIndex)).toFixed(2)} ${sizeUnits[unitIndex]}`;
 }
