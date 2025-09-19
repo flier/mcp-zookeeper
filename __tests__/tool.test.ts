@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { registerTools, formatSize } from '../src/tool';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from 'node-zookeeper-client';
-import { getData, setData, makeDirs, getChildren, exists } from '../src/zk';
+import { getData, setData, makeDirs, getChildren, exists, remove, removeRecursive } from '../src/zk';
+import type { ZkClient } from '../src/zk';
 import type { Stat } from 'node-zookeeper-client';
 
 // Mock dependencies
@@ -12,6 +12,8 @@ vi.mock('../src/zk', () => ({
     makeDirs: vi.fn(),
     getChildren: vi.fn(),
     exists: vi.fn(),
+    remove: vi.fn(),
+    removeRecursive: vi.fn(),
 }));
 
 vi.mock('file-type', () => ({
@@ -41,11 +43,11 @@ const mockStat: Stat = {
 };
 
 describe('Tool Functions', () => {
-    let mockClient: Client;
+    let mockClient: ZkClient;
     let mockServer: McpServer;
 
     beforeEach(async () => {
-        mockClient = {} as Client;
+        mockClient = { removeRecursive: vi.fn() } as unknown as ZkClient;
         mockServer = {
             tool: vi.fn(),
         } as unknown as McpServer;
@@ -58,7 +60,7 @@ describe('Tool Functions', () => {
         it('should register all tools with the server', () => {
             registerTools(mockClient, mockServer);
 
-            expect(mockServer.tool).toHaveBeenCalledTimes(9);
+            expect(mockServer.tool).toHaveBeenCalledTimes(10);
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'read_text_node',
                 expect.any(String),
@@ -103,6 +105,12 @@ describe('Tool Functions', () => {
             );
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'list_directory_tree',
+                expect.any(String),
+                expect.any(Object),
+                expect.any(Function)
+            );
+            expect(mockServer.tool).toHaveBeenCalledWith(
+                'remove_node',
                 expect.any(String),
                 expect.any(Object),
                 expect.any(Function)
@@ -352,6 +360,59 @@ describe('Tool Functions', () => {
 
                 expect(result).toEqual({
                     content: [{ type: 'text', text: 'Error: Permission denied' }],
+                    isError: true
+                });
+            });
+        });
+
+        describe('remove_node', () => {
+            it('should remove a node non-recursively by default', async () => {
+                vi.mocked(remove).mockResolvedValue(void 0);
+
+                const handler = toolHandlers.find(h => h.name === 'remove_node')!.handler;
+                const result = await handler({ path: '/test/node' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Successfully removed node /test/node ' }]
+                });
+                expect(remove).toHaveBeenCalledWith(mockClient, '/test/node', undefined);
+                expect(removeRecursive).not.toHaveBeenCalled();
+            });
+
+            it('should remove a node recursively when recursive is true', async () => {
+                vi.mocked(removeRecursive).mockResolvedValue(void 0);
+
+                const handler = toolHandlers.find(h => h.name === 'remove_node')!.handler;
+                const result = await handler({ path: '/test/node', recursive: true });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Successfully removed node /test/node and all its children' }]
+                });
+                expect(removeRecursive).toHaveBeenCalledWith(mockClient, '/test/node', undefined);
+                expect(remove).not.toHaveBeenCalled();
+            });
+
+            it('should pass version when provided (non-recursive)', async () => {
+                vi.mocked(remove).mockResolvedValue(void 0);
+
+                const handler = toolHandlers.find(h => h.name === 'remove_node')!.handler;
+                const result = await handler({ path: '/test/node', version: 3 });
+
+                // Current implementation of registerTools may not forward version; this asserts desired behavior
+                expect(remove).toHaveBeenCalledWith(mockClient, '/test/node', 3);
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Successfully removed node /test/node ' }]
+                });
+            });
+
+            it('should handle errors gracefully', async () => {
+                vi.mocked(remove).mockRejectedValue(new Error('Remove failed'));
+
+                const handler = toolHandlers.find(h => h.name === 'remove_node')!.handler;
+                const result = await handler({ path: '/test/node' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Remove failed' }],
                     isError: true
                 });
             });

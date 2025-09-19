@@ -23,6 +23,30 @@ const defaultSpinDelay = 100;
 const defaultRetries = 3;
 
 /**
+ * The ZooKeeper client interface.
+ */
+export interface ZkClient extends Client {
+    /**
+     * BFS list of the system under path. Note that this is not an atomic snapshot of
+     * the tree, but the state as it exists across multiple RPCs from clients to the
+     * ensemble.
+     *
+     * @param path - The node path.
+     * @param callback - The callback function.
+     */
+    listSubTreeBFS(path: string, callback: (error: Error | null, children: string[]) => void): void;
+
+    /**
+     * Removes a node and all its children.
+     *
+     * @param path - The node path.
+     * @param version - The version of the node.
+     * @param callback - The callback function.
+     */
+    removeRecursive(path: string, version?: number, callback?: (error: Error | null) => void): void;
+}
+
+/**
  * The authentication information.
  */
 export type AuthInfo = {
@@ -151,6 +175,44 @@ export function getData(client: Client, path: string): Promise<[Buffer, Stat]> {
  */
 export function setData(client: Client, path: string, data: Buffer): Promise<Stat> {
     return promisify<string, Buffer, Stat>(client.setData)(path, data);
+}
+
+/**
+ * Removes a node.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param path - The path of the node
+ * @returns A promise that resolves to the void
+ */
+export function remove(client: Client, path: string, version?: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+        client.remove(path, version ?? -1, (error) => {
+            if (error) {
+                reject(error);
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
+/**
+ * Removes a node and all its children.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param path - The path of the node
+ * @returns A promise that resolves to the void
+ */
+export function removeRecursive(client: ZkClient, path: string, version?: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+        client.removeRecursive(path, version ?? -1, (error) => {
+            if (error) {
+                reject(error);
+            } else {
+                resolve();
+            }
+        });
+    });
 }
 
 /**

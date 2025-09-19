@@ -9,7 +9,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-import { getData, setData, makeDirs, getChildren, exists } from "./zk.js";
+import { getData, setData, makeDirs, getChildren, exists, remove, removeRecursive, ZkClient } from "./zk.js";
 
 // Schema definitions for tool arguments
 const ReadTextNodeArgsSchema = z.object({
@@ -37,6 +37,12 @@ const EditNodeArgsSchema = z.object({
     path: z.string().describe("The path to the node to edit"),
     diffs: z.array(DiffSchema).describe("List of diff operations"),
     dryRun: z.boolean().default(false).describe('Preview changes using git-style diff format')
+});
+
+const RemoveNodeArgsSchema = z.object({
+    path: z.string().describe("The path to the node to remove"),
+    version: z.number().optional().describe("The version of the node to remove"),
+    recursive: z.boolean().default(false).describe("Whether to remove the node and all its children"),
 });
 
 const CreateDirectoryArgsSchema = z.object({
@@ -67,7 +73,7 @@ const ListDirectoryTreeArgsSchema = z.object({
  * @param client - The ZooKeeper client instance
  * @param server - The MCP server instance
  */
-export function registerTools(client: Client, server: McpServer): void {
+export function registerTools(client: ZkClient, server: McpServer): void {
     server.tool(
         "read_text_node",
         "Read the complete contents of a node from the ZooKeeper as text. " +
@@ -117,6 +123,18 @@ export function registerTools(client: Client, server: McpServer): void {
             return await callTool(editNode, client, { path, diffs, dryRun });
         }
     );
+
+    server.tool(
+        "remove_node",
+        "Remove a node. " +
+        "Use with caution as it will remove the node without warning. " +
+        "If the recursive parameter is true, it will remove the node and all its children. " +
+        "Only works within allowed directories.",
+        RemoveNodeArgsSchema.shape,
+        async ({ path, version, recursive }) => {
+            return await callTool(removeNode, client, { path, version, recursive });
+        }
+    )
 
     server.tool(
         "create_directory",
@@ -232,6 +250,7 @@ type ReadTextNodeArgs = z.infer<typeof ReadTextNodeArgsSchema>;
 type ReadBinaryNodeArgs = z.infer<typeof ReadBinaryNodeArgsSchema>;
 type WriteNodeArgs = z.infer<typeof WriteNodeArgsSchema>;
 type EditNodeArgs = z.infer<typeof EditNodeArgsSchema>;
+type RemoveNodeArgs = z.infer<typeof RemoveNodeArgsSchema>;
 type CreateDirectoryArgs = z.infer<typeof CreateDirectoryArgsSchema>;
 type ListDirectoryArgs = z.infer<typeof ListDirectoryArgsSchema>;
 type ListDirectoryWithSizesArgs = z.infer<typeof ListDirectoryWithSizesArgsSchema>;
@@ -312,6 +331,23 @@ async function editNode(client: Client, { path, diffs, dryRun }: EditNodeArgs): 
     }
 
     return dmp.patch_toText(patches);
+}
+
+/**
+ * Removes a node.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param args - The remove node arguments
+ * @returns Success message
+ */
+async function removeNode(client: ZkClient, { path, version, recursive }: RemoveNodeArgs): Promise<string> {
+    if (recursive) {
+        await removeRecursive(client, path, version);
+    } else {
+        await remove(client, path, version);
+    }
+
+    return `Successfully removed node ${path} ${recursive ? "and all its children" : ""}`;
 }
 
 /**
