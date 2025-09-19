@@ -1,9 +1,13 @@
-import { z } from "zod";
-import { fileTypeFromBuffer } from 'file-type';
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import path from "path";
+
 import { Client } from "node-zookeeper-client";
 import { diff_match_patch, type Diff } from "diff-match-patch";
+import { fileTypeFromBuffer } from 'file-type';
+import { minimatch } from "minimatch";
+import { z } from "zod";
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { getData, setData, makeDirs, getChildren, exists } from "./zk.js";
 
@@ -50,6 +54,11 @@ const ListDirectoryWithSizesArgsSchema = z.object({
 
 const GetNodeStatArgsSchema = z.object({
     path: z.string().describe("The path to the node to get the stat of"),
+});
+
+const ListDirectoryTreeArgsSchema = z.object({
+    path: z.string().describe("The path to the directory to list"),
+    excludePatterns: z.array(z.string()).optional().default([]).describe("Exclude patterns for the directory tree"),
 });
 
 /**
@@ -151,6 +160,19 @@ export function registerTools(client: Client, server: McpServer): void {
     )
 
     server.tool(
+        'list_directory_tree',
+        "Get a recursive tree view of nodes and directories as a JSON structure. " +
+        "Each entry includes 'name', 'type' (file/directory), and 'children' for directories. " +
+        "Nodes have no children array, while directories always have a children array (which may be empty). " +
+        "The output is formatted with 2-space indentation for readability. " +
+        "Only works within allowed directories.",
+        ListDirectoryTreeArgsSchema.shape,
+        async ({ path, excludePatterns }) => {
+            return await callTool(listDirectoryTree, client, { path, excludePatterns });
+        }
+    )
+
+    server.tool(
         "get_node_stat",
         "Retrieve detailed metadata about a node or directory. " +
         "Returns comprehensive information including size, creation time, last modified time, permissions, and type. " +
@@ -180,7 +202,7 @@ interface Resource {
  * @param args - The arguments for the tool function
  * @returns A formatted tool result
  */
-async function callTool<Args>(
+async function callTool<Client, Args>(
     fn: (client: Client, args: Args) => Promise<string | Resource>,
     client: Client,
     args: Args
@@ -213,6 +235,7 @@ type EditNodeArgs = z.infer<typeof EditNodeArgsSchema>;
 type CreateDirectoryArgs = z.infer<typeof CreateDirectoryArgsSchema>;
 type ListDirectoryArgs = z.infer<typeof ListDirectoryArgsSchema>;
 type ListDirectoryWithSizesArgs = z.infer<typeof ListDirectoryWithSizesArgsSchema>;
+type ListDirectoryTreeArgs = z.infer<typeof ListDirectoryTreeArgsSchema>;
 type GetNodeStatArgs = z.infer<typeof GetNodeStatArgsSchema>;
 
 /**
@@ -342,7 +365,7 @@ async function listDirectory(client: Client, { path }: ListDirectoryArgs): Promi
 /**
  * Represents a directory entry with metadata.
  */
-interface Entry {
+interface DirEntry {
     /** The name of the entry */
     name: string;
     /** Whether this entry is a directory */
@@ -378,7 +401,7 @@ interface Entry {
 async function listDirectoryWithSizes(client: Client, { path, sortBy }: ListDirectoryWithSizesArgs): Promise<string> {
     const [children] = await getChildren(client, path);
 
-    const detailedEntries: Entry[] = [];
+    const detailedEntries: DirEntry[] = [];
 
     for (const child of children) {
         const stat = await exists(client, path + "/" + child);
@@ -459,6 +482,79 @@ export function formatSize(bytes: number): string {
 
     const unitIndex = Math.min(i, sizeUnits.length - 1);
     return `${(bytes / Math.pow(1024, unitIndex)).toFixed(2)} ${sizeUnits[unitIndex]}`;
+}
+
+export interface TreeEntry {
+    name: string;
+    type: 'file' | 'directory';
+    children?: TreeEntry[];
+}
+
+/**
+ * Lists the contents of a directory as a tree.
+ *
+ * @param client - The ZooKeeper client instance
+ * @param args - The list directory tree arguments
+ * @returns A formatted string with the directory tree in JSON format
+ */
+async function listDirectoryTree(client: Client, { path: rootPath, excludePatterns }: ListDirectoryTreeArgs): Promise<string> {
+    async function buildTree(currPath: string): Promise<TreeEntry[]> {
+        const [children] = await getChildren(client, currPath);
+        const tree: TreeEntry[] = [];
+
+        for (const name of children) {
+            const relativePath = path.relative(rootPath, path.join(currPath, name));
+            const shouldExclude = (excludePatterns || []).some(pattern => {
+                if (pattern.includes('*')) {
+                    // Handle patterns like "dir1/**" - should also exclude "dir1" itself
+                    if (pattern.endsWith('/**')) {
+                        const dirName = pattern.slice(0, -3); // Remove "/**"
+                        return minimatch(relativePath, dirName, { dot: true }) ||
+                            minimatch(relativePath, pattern, { dot: true });
+                    }
+
+                    return minimatch(relativePath, pattern, { dot: true });
+                }
+
+                // For files: match exact name or as part of path
+                // For directories: match as directory path
+                return minimatch(relativePath, pattern, { dot: true }) ||
+                    minimatch(relativePath, `**/${pattern}`, { dot: true }) ||
+                    minimatch(relativePath, `**/${pattern}/**`, { dot: true });
+            });
+
+            if (shouldExclude)
+                continue;
+
+            const stat = await exists(client, path.join(currPath, name));
+            if (!stat) {
+                continue; // Skip if node doesn't exist
+            }
+
+            const isDirectory = stat.numChildren > 0;
+            const type = isDirectory ? 'directory' : 'file';
+
+            if (isDirectory) {
+                const children = await buildTree(path.join(currPath, name));
+                tree.push({
+                    name,
+                    type,
+                    children,
+                });
+            } else {
+                tree.push({
+                    name,
+                    type,
+                });
+            }
+        }
+
+        return tree;
+    }
+
+    const tree = await buildTree(rootPath);
+
+    return JSON.stringify(tree, null, 2)
 }
 
 /**

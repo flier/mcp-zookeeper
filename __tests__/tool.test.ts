@@ -58,7 +58,7 @@ describe('Tool Functions', () => {
         it('should register all tools with the server', () => {
             registerTools(mockClient, mockServer);
 
-            expect(mockServer.tool).toHaveBeenCalledTimes(8);
+            expect(mockServer.tool).toHaveBeenCalledTimes(9);
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'read_text_node',
                 expect.any(String),
@@ -97,6 +97,12 @@ describe('Tool Functions', () => {
             );
             expect(mockServer.tool).toHaveBeenCalledWith(
                 'list_directory_with_sizes',
+                expect.any(String),
+                expect.any(Object),
+                expect.any(Function)
+            );
+            expect(mockServer.tool).toHaveBeenCalledWith(
+                'list_directory_tree',
                 expect.any(String),
                 expect.any(Object),
                 expect.any(Function)
@@ -542,6 +548,224 @@ describe('Tool Functions', () => {
                 expect(result).toEqual({
                     content: [{ type: 'text', text: 'Error: Directory not found' }],
                     isError: true
+                });
+            });
+        });
+
+        describe('list_directory_tree', () => {
+            it('should return tree structure for directory with files and subdirectories', async () => {
+                // Mock root directory children
+                vi.mocked(getChildren).mockResolvedValueOnce([['file1.txt', 'dir1', 'file2.txt'], mockStat]);
+
+                // Mock file stats
+                const mockFileStat = { ...mockStat, numChildren: 0 };
+                const mockDirStat = { ...mockStat, numChildren: 2 };
+
+                // Mock exists calls for root level
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockFileStat)  // file1.txt
+                    .mockResolvedValueOnce(mockDirStat)   // dir1
+                    .mockResolvedValueOnce(mockFileStat); // file2.txt
+
+                // Mock subdirectory children
+                vi.mocked(getChildren).mockResolvedValueOnce([['subfile.txt'], mockStat]);
+
+                // Mock exists calls for subdirectory
+                vi.mocked(exists).mockResolvedValueOnce(mockFileStat); // subfile.txt
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_tree')!.handler;
+                const result = await handler({ path: '/test' });
+
+                const expectedTree = [
+                    {
+                        name: 'file1.txt',
+                        type: 'file'
+                    },
+                    {
+                        name: 'dir1',
+                        type: 'directory',
+                        children: [
+                            {
+                                name: 'subfile.txt',
+                                type: 'file'
+                            }
+                        ]
+                    },
+                    {
+                        name: 'file2.txt',
+                        type: 'file'
+                    }
+                ];
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: JSON.stringify(expectedTree, null, 2) }]
+                });
+
+                expect(getChildren).toHaveBeenCalledWith(mockClient, '/test');
+                expect(getChildren).toHaveBeenCalledWith(mockClient, '/test/dir1');
+            });
+
+            it('should handle empty directory', async () => {
+                vi.mocked(getChildren).mockResolvedValue([[], mockStat]);
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_tree')!.handler;
+                const result = await handler({ path: '/test' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: '[]' }]
+                });
+            });
+
+            it('should exclude files and directories based on patterns', async () => {
+                // Mock root directory children
+                vi.mocked(getChildren).mockResolvedValueOnce([['file1.txt', 'temp.log', 'dir1', 'cache'], mockStat]);
+
+                const mockFileStat = { ...mockStat, numChildren: 0 };
+                const mockDirStat = { ...mockStat, numChildren: 1 };
+
+                // Mock exists calls for root level (only for non-excluded items)
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockFileStat)  // file1.txt (not excluded)
+                    .mockResolvedValueOnce(mockDirStat);  // dir1 (not excluded)
+                // temp.log and cache are excluded, so no exists calls for them
+
+                // Mock subdirectory children (only dir1 should be processed)
+                vi.mocked(getChildren).mockResolvedValueOnce([['subfile.txt'], mockStat]);
+                vi.mocked(exists).mockResolvedValueOnce(mockFileStat); // subfile.txt
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_tree')!.handler;
+                const result = await handler({
+                    path: '/test',
+                    excludePatterns: ['*.log', 'cache']
+                });
+
+                const expectedTree = [
+                    {
+                        name: 'file1.txt',
+                        type: 'file'
+                    },
+                    {
+                        name: 'dir1',
+                        type: 'directory',
+                        children: [
+                            {
+                                name: 'subfile.txt',
+                                type: 'file'
+                            }
+                        ]
+                    }
+                ];
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: JSON.stringify(expectedTree, null, 2) }]
+                });
+            });
+
+            it('should handle wildcard exclusion patterns', async () => {
+                // Mock root directory children
+                vi.mocked(getChildren).mockResolvedValueOnce([['file1.txt', 'temp.log', 'backup.tmp'], mockStat]);
+
+                const mockFileStat = { ...mockStat, numChildren: 0 };
+
+                // Mock exists calls for root level
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockFileStat)  // file1.txt
+                    .mockResolvedValueOnce(mockFileStat)  // temp.log
+                    .mockResolvedValueOnce(mockFileStat); // backup.tmp
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_tree')!.handler;
+                const result = await handler({
+                    path: '/test',
+                    excludePatterns: ['*.log', '*.tmp']
+                });
+
+                const expectedTree = [
+                    {
+                        name: 'file1.txt',
+                        type: 'file'
+                    }
+                ];
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: JSON.stringify(expectedTree, null, 2) }]
+                });
+            });
+
+            it('should handle nested directory exclusion patterns', async () => {
+                // Mock root directory children
+                vi.mocked(getChildren).mockResolvedValueOnce([['dir1', 'dir2'], mockStat]);
+
+                const mockDirStat = { ...mockStat, numChildren: 1 };
+
+                // Mock exists calls for root level (only for non-excluded items)
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockDirStat); // dir2 (dir1 is excluded)
+
+                // Mock subdirectory children (only dir2 should be processed)
+                vi.mocked(getChildren).mockResolvedValueOnce([['file2.txt'], mockStat]); // dir2
+
+                vi.mocked(exists).mockResolvedValueOnce({ ...mockStat, numChildren: 0 }); // dir2/file2.txt
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_tree')!.handler;
+                const result = await handler({
+                    path: '/test',
+                    excludePatterns: ['dir1/**']
+                });
+
+                const expectedTree = [
+                    {
+                        name: 'dir2',
+                        type: 'directory',
+                        children: [
+                            {
+                                name: 'file2.txt',
+                                type: 'file'
+                            }
+                        ]
+                    }
+                ];
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: JSON.stringify(expectedTree, null, 2) }]
+                });
+            });
+
+            it('should handle errors gracefully', async () => {
+                const error = new Error('Directory not found');
+                vi.mocked(getChildren).mockRejectedValue(error);
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_tree')!.handler;
+                const result = await handler({ path: '/test' });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'Error: Directory not found' }],
+                    isError: true
+                });
+            });
+
+            it('should handle missing files gracefully', async () => {
+                // Mock root directory children
+                vi.mocked(getChildren).mockResolvedValueOnce([['file1.txt', 'missing.txt'], mockStat]);
+
+                const mockFileStat = { ...mockStat, numChildren: 0 };
+
+                // Mock exists calls - one file exists, one doesn't
+                vi.mocked(exists)
+                    .mockResolvedValueOnce(mockFileStat)  // file1.txt
+                    .mockResolvedValueOnce(null);         // missing.txt (should be skipped)
+
+                const handler = toolHandlers.find(h => h.name === 'list_directory_tree')!.handler;
+                const result = await handler({ path: '/test' });
+
+                const expectedTree = [
+                    {
+                        name: 'file1.txt',
+                        type: 'file'
+                    }
+                ];
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: JSON.stringify(expectedTree, null, 2) }]
                 });
             });
         });

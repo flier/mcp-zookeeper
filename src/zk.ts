@@ -1,4 +1,5 @@
 import { promisify } from "util";
+
 import { createClient, Client, Stat } from "node-zookeeper-client";
 
 /**
