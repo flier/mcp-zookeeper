@@ -89,7 +89,7 @@ export type ZookeeperOptions = {
  * @param opts - Optional configuration for the ZooKeeper client
  * @returns A connected ZooKeeper client instance
  */
-export function connectToZooKeeper(connStr?: string, opts?: ZookeeperOptions): Client {
+export function connectToZooKeeper(connStr?: string, opts?: ZookeeperOptions): ZkClient {
     const client = createClient(connStr ?? defaultServers, {
         sessionTimeout: opts?.sessionTimeout ?? defaultSessionTimeout,
         spinDelay: opts?.spinDelay ?? defaultSpinDelay,
@@ -113,7 +113,7 @@ export function connectToZooKeeper(connStr?: string, opts?: ZookeeperOptions): C
         console.error('Client state changed to', state);
     });
 
-    return client;
+    return client as ZkClient;
 }
 
 /**

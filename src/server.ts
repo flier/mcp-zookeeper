@@ -1,18 +1,22 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { Client } from "node-zookeeper-client";
 
-import { connectToZooKeeper, ZookeeperOptions } from "./zk.js";
+import { connectToZooKeeper, ZkClient, ZookeeperOptions } from "./zk.js";
 import { registerPrompts } from "./prompt.js";
 import { registerResources } from "./resource.js";
 import { registerTools } from "./tool.js";
 import { runHttpServer, HttpServerOptions } from "./http.js";
 
+interface ServerOptions extends ZookeeperOptions {
+    name?: string;
+    version?: string;
+}
+
 /**
  * MCP ZooKeeper Server that provides tools and resources for interacting with ZooKeeper.
  */
 export class Server extends McpServer {
-    readonly client: Client;
+    readonly client: ZkClient;
 
     /**
      * Creates a new MCP ZooKeeper Server instance.
@@ -20,10 +24,10 @@ export class Server extends McpServer {
      * @param connStr - The ZooKeeper connection string
      * @param opts - Optional ZooKeeper client configuration
      */
-    constructor(connStr: string, opts?: ZookeeperOptions) {
+    constructor(connStr: string, opts?: ServerOptions) {
         super({
-            name: "zookeeper",
-            version: "0.1.0",
+            name: opts?.name ?? "zookeeper",
+            version: opts?.version ?? "0.1.0",
             capabilities: {
                 resources: {},
                 tools: {},

@@ -520,7 +520,7 @@ export function formatSize(bytes: number): string {
     return `${(bytes / Math.pow(1024, unitIndex)).toFixed(2)} ${sizeUnits[unitIndex]}`;
 }
 
-export interface TreeEntry {
+interface TreeEntry {
     name: string;
     type: 'file' | 'directory';
     children?: TreeEntry[];
