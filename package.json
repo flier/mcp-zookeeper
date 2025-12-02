@@ -59,7 +59,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.4",
+    "@modelcontextprotocol/sdk": "^1.24.0",
     "cors": "^2.8.5",
     "diff-match-patch": "^1.0.5",
     "errorhandler": "^1.5.1",
